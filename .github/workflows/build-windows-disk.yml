@@ -1,0 +1,62 @@
+# Builds the encrypted Windows 11 ARM64 disk for WindowsiOS on a GitHub-hosted Mac
+# and publishes it as a release (the disk is encrypted; only the holder of the
+# private key matching the public key in build_windows_disk.sh can open it).
+# Actions tab -> "Build Windows disk" -> Run workflow. Takes several hours.
+name: Build Windows disk
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  disk:
+    runs-on: macos-26
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h /
+          # Keep only the active Xcode (resolve symlinks like /Applications/Xcode.app).
+          KEEP="$(cd "$(xcode-select -p)/../.." && pwd -P)"
+          echo "Keeping $KEEP"
+          for x in /Applications/Xcode*.app; do
+            [ -L "$x" ] && continue
+            [ "$(cd "$x" && pwd -P)" = "$KEEP" ] && continue
+            sudo rm -rf "$x" &
+          done
+          sudo rm -rf "$HOME/Library/Android" /usr/local/share/dotnet /usr/local/lib/node_modules "$HOME/.dotnet" &
+          xcrun simctl runtime delete all >/dev/null 2>&1 || true
+          wait
+          df -h /
+
+      - name: Install build tools
+        run: brew install qemu wimlib libslirp pkg-config llvm lld pigz python
+
+      - name: Build Windows disk
+        run: |
+          chmod +x build_windows_disk.sh
+          ./build_windows_disk.sh
+
+      - name: Publish encrypted disk as a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="windows-disk-${{ github.run_number }}"
+          gh release create "$TAG" out/* \
+            --repo "${{ github.repository }}" \
+            --title "Encrypted Windows 11 disk (run ${{ github.run_number }})" \
+            --notes "Encrypted Windows 11 ARM64 disk for WindowsiOS. Only the matching private key can decrypt it."
+
+      - name: Upload logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-disk-logs
+          path: |
+            work/*.log
+            work/*.png
+          if-no-files-found: ignore
