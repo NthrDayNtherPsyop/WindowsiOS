@@ -1,0 +1,47 @@
+# Builds an unsigned WindowsiOS.ipa on a GitHub-hosted Mac.
+# Fork https://github.com/ammaarreshi/WindowsiOS, add this file at
+# .github/workflows/build-ipa.yml and build_ipa.sh at the repo root,
+# then Actions tab -> "Build unsigned IPA" -> Run workflow.
+# The IPA appears under the run's "Artifacts" section.
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest installed Xcode
+        run: |
+          XC="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          echo "Using $XC"
+          sudo xcode-select -s "$XC/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install build tools
+        run: brew install xcodegen meson ninja pkg-config python
+
+      - name: Build IPA
+        run: |
+          chmod +x build_ipa.sh scripts/build_ios_deps.sh
+          ./build_ipa.sh
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: WindowsiOS-unsigned-ipa
+          path: build/WindowsiOS.ipa
+          if-no-files-found: error
+
+      - name: Upload dependency build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deps-build-logs
+          path: work/ios_deps_build/*.log
+          if-no-files-found: ignore
