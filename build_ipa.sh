@@ -5,8 +5,8 @@
 # Put this file in the repo root and run:  ./build_ipa.sh
 # Output: build/WindowsiOS.ipa  (re-sign it with Sideloadly / AltStore / SideStore)
 #
-# Needs: Xcode with an iOS SDK that has UIHingeInteraction (iOS 27.1 SDK or newer),
-#        plus Homebrew packages: xcodegen meson ninja pkg-config python
+# Needs: Xcode (an iOS 27.1+ SDK keeps the foldable hinge sensor; older SDKs build
+#        without it), plus Homebrew packages: xcodegen meson ninja pkg-config python
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -22,7 +22,19 @@ for t in xcodebuild xcodegen meson ninja pkg-config /opt/homebrew/bin/python3 co
 done
 [ "$missing" = 0 ] || { echo "Install Xcode, then: brew install xcodegen meson ninja pkg-config python"; exit 1; }
 xcodebuild -version
-echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+SDKVER="$(xcrun --sdk iphoneos --show-sdk-version)"
+echo "iOS SDK: $SDKVER"
+
+# UIHingeInteraction (foldable hinge sensor) only exists in the iOS 27.1+ SDK.
+# On an older SDK, compile that block out; the app then uses its default layout.
+if [ "$(printf '%s\n' 27.1 "$SDKVER" | sort -V | head -1)" != "27.1" ]; then
+    step "iOS SDK $SDKVER is older than 27.1: disabling the UIHingeInteraction hinge sensor"
+    /usr/bin/perl -0pi -e 's/\n[ \t]*if #available\(iOS 27\.1, \*\) \{\n.*?view\.addInteraction\(interaction\)\n[ \t]*\}\n/\n/s' \
+        ios/Sources/HingeSensorView.swift
+    if grep -q 'UIHingeInteraction {' ios/Sources/HingeSensorView.swift; then
+        echo "Could not patch out UIHingeInteraction"; exit 1
+    fi
+fi
 
 # glib's meson build needs the Python 'packaging' module in the interpreter
 # that scripts/build_ios_deps.sh hard-codes (/opt/homebrew/bin/python3).
